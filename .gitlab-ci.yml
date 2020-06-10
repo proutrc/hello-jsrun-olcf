@@ -1,0 +1,91 @@
+variables:
+  SCHEDULER_PARAMETERS: "-P STF014 -W 10 -nnodes 1 -alloc_flags gpumps"
+  GIT_STRATEGY: clone
+  EXTERNAL_WORKDIR: /gpfs/wolf/proj-shared/stf007/ci/${CI_JOB_ID}
+
+stages:
+  # The 'build-nobatch-standard' stage uses the default build space (/root/* on the login node - not accessible on compute nodes)
+  - build-nobatch-standard
+  # The 'test' stage copies the binary created from "build-nobatch-standard" to /ccsopen/home/<uid>. 
+  # Otherwise the binary is not found on compute nodes during a batch run.
+  - test
+  # The 'build-nobatch-gpfs' stage is an example of how to build on GPFS, instead of the defualt /root/* path used in 'build-nobatch-standard'.
+  - build-nobatch-gpfs
+  # the 'test-gpfs' stage uses the binary from the 'build-nobatch-stage'
+  - test-gpfs
+
+#### Standard Build and Test Stages ####
+build-nobatch-standard:
+  stage: build-nobatch-standard
+  before_script:
+    - module load cuda/10.1.105
+  script:
+    - echo "This is the building with nobatch"
+    - make
+    - ls
+  artifacts:
+    paths:
+      - hello_jsrun
+      # - hello_jsrun.o
+  tags:
+    - nobatch
+
+test:
+  #extends: build-nobatch
+  stage: test
+  dependencies:
+    - build-nobatch-standard
+  before_script:
+    - module load cuda/10.1.105
+  script:
+    #- echo "This is running job"
+    - pwd
+    - ls -la
+    - hostname
+    - cp /root/hpc-gitlab-runner/ecpcitest/hello_world_example/builds/users/ryu/2e8de492/0/ecpcitest/hello_world_example/hello_jsrun /ccsopen/home/ryu/
+    - "jsrun -n6 -c7 -a1 -g1 -bpacked:2 /ccsopen/home/ryu/hello_jsrun verbose | sort"
+    #- jsrun -n1 -a1 -c1 ls
+  tags:
+    - batch
+#### End Standard Build and Test Stages #####
+
+#### Build and Test using GPFS ####
+build-nobatch-gpfs:
+  stage: build-nobatch-gpfs
+  before_script:
+    # Use work directory on shared filesystem accessible to compute nodes
+    - module load cuda/10.1.105
+    - module load git
+    - git clone ${CI_PROJECT_DIR} ${EXTERNAL_WORKDIR}/source
+    - cd ${EXTERNAL_WORKDIR}/source
+    - git checkout --detach ${CI_COMMIT_SHA}
+  script:
+    - echo "This is building on gpfs"
+    - make
+    - pwd
+    - ls
+    - echo ${EXTERNAL_WORKDIR} > ../../path.txt
+  after_script:
+    # clean up the directory
+    #- rm -rf ${EXTERNAL_WORKDIR}
+  tags:
+    - nobatch
+
+test-gpfs:
+  stage: test-gpfs
+  dependencies:
+    - build-nobatch-gpfs
+  before_script:
+    - module load cuda/10.1.105
+    - cd /gpfs/wolf/proj-shared/stf007/ci/
+    - BUILD_DIR=`cat path.txt`
+  script:
+    - "jsrun -n6 -c7 -a1 -g1 -bpacked:2 $BUILD_DIR/source/hello_jsrun"
+  after_script:
+    # clean up directory
+    - cd /gpfs/wolf/proj-shared/stf007/ci/
+    - BUILD_DIR=`cat path.txt`
+    - rm -rf $BUILD_DIR
+  tags:
+    - batch
+#### End GPFS Build and Test ####
